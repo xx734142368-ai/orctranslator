@@ -1,0 +1,140 @@
+/* Selection Overlay */
+.manga-translator-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 2147483646;
+  cursor: crosshair;
+  background: rgba(0, 0, 0, 0.2);
+  display: none;
+}
+
+.manga-translator-selection {
+  border: 2px solid #FF5722;
+  background: rgba(255, 87, 34, 0.1);
+  position: absolute;
+  pointer-events: none;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+  transition: opacity 0.2s;
+}
+
+/* Loading Result (Initial State) */
+.manga-translator-result {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px dashed #999;
+  z-index: 2147483647;
+  backdrop-filter: blur(2px);
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* Final Bubble Style (Overlay Mode) */
+.manga-translator-bubble {
+  position: absolute;
+  background: #fff;
+  /* Opaque white to cover original text */
+  color: #000;
+  z-index: 2147483647;
+  font-family: "Comic Sans MS", "Chalkboard SE", "Segoe UI", sans-serif;
+  /* Comic font preferred */
+  font-size: 14px;
+  /* Adaptive? maybe later */
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  /* Slight rounded corners */
+  overflow: hidden;
+  /* Hide overflow */
+  line-height: 1.3;
+  cursor: pointer;
+  animation: popIn 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+}
+
+.manga-translator-text {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  /* Centering */
+  align-items: center;
+  justify-content: center;
+  word-break: break-word;
+}
+
+.original-text {
+  color: #888;
+  font-size: 0.9em;
+  font-style: italic;
+}
+
+.manga-translator-loading {
+  color: #555;
+  font-weight: bold;
+  animation: pulse 1s infinite;
+}
+
+.manga-translator-close {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 16px;
+  height: 16px;
+  background: rgba(0, 0, 0, 0.1);
+  color: #555;
+  line-height: 14px;
+  text-align: center;
+  font-size: 14px;
+  cursor: pointer;
+  display: none;
+  z-index: 10;
+}
+
+.manga-translator-bubble:hover .manga-translator-close {
+  display: block;
+}
+
+.manga-translator-close:hover {
+  background: #ff5252;
+  color: white;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes popIn {
+  from {
+    transform: scale(0.8);
+    opacity: 0;
+  }
+
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes pulse {
+  0% {
+    opacity: 0.6;
+  }
+
+  50% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0.6;
+  }
+}
