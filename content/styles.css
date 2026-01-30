@@ -7,7 +7,7 @@
   height: 100%;
   z-index: 2147483646;
   cursor: crosshair;
-  background: rgba(0, 0, 0, 0.2);
+  background: rgba(0, 0, 0, 0.0);
   display: none;
 }
 
@@ -136,5 +136,61 @@
 
   100% {
     opacity: 0.6;
+  }
+}
+
+/* Continuous Mode Badge */
+.manga-translator-status-badge {
+  position: fixed;
+  bottom: 30px;
+  right: 30px;
+  padding: 10px 20px;
+  background: linear-gradient(135deg, #FF5722 0%, #F44336 100%);
+  color: white;
+  font-weight: bold;
+  font-size: 14px;
+  border-radius: 30px;
+  z-index: 2147483647;
+  pointer-events: none;
+  font-family: 'Segoe UI', Roboto, sans-serif;
+  box-shadow: 0 8px 16px rgba(255, 87, 34, 0.3);
+  display: none;
+  align-items: center;
+  gap: 10px;
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  animation: slideInUp 0.4s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+}
+
+.manga-translator-status-badge.active {
+  display: flex;
+}
+
+.manga-translator-status-badge svg {
+  width: 18px;
+  height: 18px;
+  fill: white;
+  animation: rotate 2s linear infinite;
+}
+
+@keyframes slideInUp {
+  from {
+    transform: translateY(100px);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes rotate {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
   }
 }

@@ -88,6 +88,30 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true; // Async response
     }
 
+    if (request.action === 'performLocalTranslate') {
+        fetch('http://127.0.0.1:8000/translate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(request.payload)
+        })
+            .then(response => response.json())
+            .then(data => sendResponse({ success: true, data: data }))
+            .catch(error => sendResponse({ success: false, error: error.message }));
+        return true;
+    }
+
+    if (request.action === 'sendFeedback') {
+        fetch('http://127.0.0.1:8000/feedback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(request.payload)
+        })
+            .then(response => response.json())
+            .then(data => sendResponse({ success: true, data: data }))
+            .catch(error => sendResponse({ success: false, error: error.message }));
+        return true;
+    }
+
     if (request.action === 'checkLocalServer') {
         fetch('http://127.0.0.1:8000/')
             .then(r => {

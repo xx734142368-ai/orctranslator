@@ -31,7 +31,7 @@ def clean_duplicates():
                 # Check for duplicate
                 if norm_orig in seen_originals:
                     duplicates_count += 1
-                    print(f"🗑️  Removing Duplicate: {orig[:20].replace(chr(10), ' ')}... -> {trans[:20]}...")
+                    print(f"Removing Duplicate: {orig[:20].replace(chr(10), ' ')}... -> {trans[:20]}...")
                     continue
                 
                 seen_originals.add(norm_orig)
@@ -43,13 +43,13 @@ def clean_duplicates():
             if duplicates_count > 0:
                 with open(DATA_FILE, 'w', encoding='utf-8') as f:
                     json.dump(data, f, ensure_ascii=False, indent=2)
-                print(f"\n✅ Cleanup Complete!")
-                print(f"📊 Stats: {original_count} -> {len(clean_items)} (Removed {duplicates_count} duplicates)")
+                print(f"\nCleanup Complete!")
+                print(f"Stats: {original_count} -> {len(clean_items)} (Removed {duplicates_count} duplicates)")
             else:
-                print("\n✨ No duplicates found. Data is squeaky clean.")
+                print("\nNo duplicates found. Data is squeaky clean.")
 
     except Exception as e:
-        print(f"❌ Error during cleanup: {e}")
+        print(f"Error during cleanup: {e}")
 
 if __name__ == "__main__":
     clean_duplicates()

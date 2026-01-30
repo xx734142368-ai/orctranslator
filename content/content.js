@@ -3,6 +3,7 @@ let isSelecting = false;
 let startX, startY;
 let selectionDiv = null;
 let overlayDiv = null;
+let statusBadge = null;
 
 // Settings
 let currentSourceLang = 'eng';
@@ -108,6 +109,7 @@ document.addEventListener('keydown', (e) => {
         if (!continuousMode) {
             // Enter continuous mode
             continuousMode = true;
+            updateStatusBadge(true);
             startSelectionMode();
             console.log('🔄 Continuous translation mode activated (press ESC to exit)');
         }
@@ -115,6 +117,7 @@ document.addEventListener('keydown', (e) => {
         // Exit continuous mode
         if (continuousMode) {
             continuousMode = false;
+            updateStatusBadge(false);
             cancelSelection();
             console.log('⏹️ Continuous translation mode deactivated');
         } else if (isSelecting) {
@@ -135,6 +138,24 @@ function startSelectionMode() {
     createOverlay();
     overlayDiv.style.display = 'block';
     document.body.style.cursor = 'crosshair';
+}
+
+function updateStatusBadge(show) {
+    if (!statusBadge) {
+        statusBadge = document.createElement('div');
+        statusBadge.className = 'manga-translator-status-badge';
+        statusBadge.innerHTML = `
+            <svg viewBox="0 0 24 24"><path d="M12,4V2A10,10 0 0,0 2,12H4A8,8 0 0,1 12,4Z"/></svg>
+            <span>实时翻译模式已开启 (ESC 退出)</span>
+        `;
+        document.body.appendChild(statusBadge);
+    }
+
+    if (show) {
+        statusBadge.classList.add('active');
+    } else {
+        statusBadge.classList.remove('active');
+    }
 }
 
 function onMouseDown(e) {
@@ -174,14 +195,13 @@ async function confirmPendingApprovals() {
             if (currentText === item.aiTranslated) {
                 console.log(`[Flow] Implicit Approval: "${item.original}" -> "${item.aiTranslated}"`);
                 try {
-                    fetch('http://127.0.0.1:8000/feedback', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
+                    chrome.runtime.sendMessage({
+                        action: 'sendFeedback',
+                        payload: {
                             original_text: item.original,
                             corrected_translation: item.aiTranslated,
                             session_id: sessionId
-                        })
+                        }
                     });
                 } catch (err) {
                     console.warn("Implicit approval failed", err);
@@ -477,14 +497,13 @@ async function processSelection(rect) {
                     // Remove from pending queue (explicit feedback takes priority)
                     pendingApprovals = pendingApprovals.filter(p => p.element !== textSpan);
 
-                    await fetch('http://127.0.0.1:8000/feedback', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
+                    chrome.runtime.sendMessage({
+                        action: 'sendFeedback',
+                        payload: {
                             original_text: text,
                             corrected_translation: correctedText,
                             session_id: sessionId
-                        })
+                        }
                     });
                     console.log(`✅ Feedback sent: "${text}" -> "${correctedText}"`);
 
@@ -677,27 +696,27 @@ async function translateText(text, target) {
     if (!text || !text.trim()) return { text: "", isLearned: false };
 
     try {
-        console.log(`[Flow] Asking Local LLM (Qwen): ${text.substring(0, 20)}...`);
-        const response = await fetch('http://127.0.0.1:8000/translate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                text: text,
-                session_id: sessionId,
-                target_lang: target
-            })
+        console.log(`[Flow] Asking DeepSeek API (via Local): ${text.substring(0, 20)}...`);
+        const data = await new Promise((resolve, reject) => {
+            chrome.runtime.sendMessage({
+                action: 'performLocalTranslate',
+                payload: {
+                    text: text,
+                    session_id: sessionId,
+                    target_lang: target
+                }
+            }, r => r && r.success ? resolve(r.data) : reject(r ? r.error : 'offline'));
         });
 
-        const data = await response.json();
         return {
             text: data.translatedText || text,
             isLearned: !!data.is_learned
         };
 
     } catch (e) {
-        console.error("❌ CRITICAL: Local LLM Request Failed!", e);
+        console.error("❌ CRITICAL: Translation Request Failed!", e);
         return {
-            text: text + " [LLM: " + e.message + "]",
+            text: text + " [LLM: " + (typeof e === 'string' ? e : "Failed to fetch") + "]",
             isLearned: false
         };
     }
