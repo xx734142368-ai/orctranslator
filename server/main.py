@@ -13,6 +13,12 @@ import json
 from collections import deque, defaultdict
 from typing import Optional, List, Dict
 
+# --- Configuration ---
+# --- Configuration ---
+DEEPSEEK_API_KEY = "sk-89a38021138e4c78a4383a296b28b266"
+DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
+MODEL_NAME = "deepseek-chat"
+
 # Fix PaddleOCR Crash (Disable PIR and oneDNN)
 os.environ["FLAGS_enable_pir_api"] = "0"
 os.environ["FLAGS_allocator_strategy"] = 'naive_best_fit'
@@ -295,107 +301,121 @@ async def perform_ocr(request: OCRRequest):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.on_event("startup")
+async def startup_event():
+    """Prime the model with user style on startup."""
+    print("🚀 Warming up LLM with recent user corrections...")
+    try:
+        # 1. Gather recent corrections for context
+        corrections = []
+        # Support both old and new data structures just in case, but preferentially use 'global'
+        if "global" in translation_manager.user_corrections:
+            corrections = translation_manager.user_corrections["global"][-50:] # Take last 50
+        
+        if not corrections:
+            print("ℹ️ No user data found for priming. skipping.")
+            return
+
+        # 2. Build a dummy prompt to load model & context
+        prime_prompt = "System: Load User Style.\n"
+        for orig, trans in corrections:
+             prime_prompt += f"{orig} -> {trans}\n"
+        prime_prompt += "\nReady."
+
+        # 3. Send Async Request (Fire and Forget-ish, but we wait to ensure it's loaded)
+        requests.post("http://localhost:11434/api/generate", json={
+            "model": "qwen2.5:7b",
+            "prompt": prime_prompt,
+            "keep_alive": -1, 
+            "options": {"num_predict": 1} 
+        }, timeout=30)
+        print("✅ LLM Primed & Loaded into Memory!")
+    except Exception as e:
+        print(f"⚠️ LLM Priming skipped: {e}")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Unload model from memory on shutdown."""
+    print("🛑 Shutting down... Unloading LLM to free VRAM...")
+    try:
+        requests.post("http://localhost:11434/api/generate", json={
+            "model": "qwen2.5:7b",
+            "keep_alive": 0 
+        }, timeout=5)
+        print("✅ LLM Unloaded.")
+    except Exception as e:
+        print(f"⚠️ Failed to unload LLM: {e}")
+
 @app.post("/translate")
 async def perform_translation(request: TranslateRequest):
-    OLLAMA_URL = "http://localhost:11434/api/generate"
-    MODEL_NAME = "qwen2.5:7b" 
-
     async with translation_manager.lock:
         try:
-            import difflib
-            # Keep original text with line breaks for translation
             original_text = request.text.strip()
-            
-            # 🎯 FUZZY MATCH CACHE: Hit historical corrections if similarity is high
-            def get_similarity(s1, s2):
-                """Calculate string similarity ratio"""
-                return difflib.SequenceMatcher(None, s1, s2).ratio()
+            if not original_text:
+                return {"translatedText": ""}
 
-            def normalize(text):
-                """Remove all whitespace for comparison"""
-                return text.replace('\n', '').replace(' ', '').strip()
-            
-            normalized_current = normalize(original_text)
-            
-            if request.session_id in translation_manager.user_corrections:
-                best_match = None
-                highest_ratio = 0.0
-                
-                for orig, corrected in translation_manager.user_corrections[request.session_id]:
-                    # Check exact match first (Fast)
-                    norm_orig = normalize(orig)
-                    if norm_orig == normalized_current:
-                        print(f"✅ Exact Cache Hit: '{original_text[:20]}...'")
-                        return {"translatedText": corrected, "is_learned": True}
-                    
-                    # Then check fuzzy match (Slower but smart)
-                    ratio = get_similarity(norm_orig, normalized_current)
-                    if ratio > highest_ratio:
-                        highest_ratio = ratio
-                        best_match = corrected
+            # 🎯 FUZZY MATCH CACHE
+            def normalize(text): return text.replace('\n', '').replace(' ', '').strip()
+            # 🎯 FUZZY MATCH CACHE - DISABLED (Always refer to DeepSeek for fresh context)
+            # normalized_current = normalize(original_text)
+            # Logic removed to force LLM generation.
 
-                # If similarity > 0.75, assume it's the same intention (skip LLM)
-                if highest_ratio > 0.75:
-                    print(f"✨ Fuzzy Cache Hit ({highest_ratio:.2f}): '{original_text[:20]}...'")
-                    return {"translatedText": best_match, "is_learned": True}
-                else:
-                    print(f"💨 Cache Miss. Best Ratio: {highest_ratio:.2f}")
-            
-            # Pass original text (with line breaks) to LLM for better context
-            full_prompt = translation_manager.build_prompt(
-                original_text, 
-                request.session_id
+            # --- Build System Prompt with Style Guide ---
+            # Robust Prompt for DeepSeek (Handle OCR noise and mixed languages)
+            system_prompt = (
+                "你是一个精通成人漫画语境的翻译家。无论输入是韩语、英语、西班牙语还是乱码，一律翻译成地道的中文。\n"
+                "1. 翻译风格：口语化、色气、直接，严禁书面腔。\n"
+                "2. 强制规则：只输出译文本身，严禁包含任何解释、注脚、拼音或“翻译结果：”等前缀。\n"
+                "3. 遇到人名必须音译，遇到乱码结合上下文猜测语义。"
             )
             
-            response = requests.post(OLLAMA_URL, json={
+            # --- Call DeepSeek API ---
+            # Using OpenAI-compatible format
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {DEEPSEEK_API_KEY}"
+            }
+            
+            payload = {
                 "model": MODEL_NAME,
-                "prompt": full_prompt,
-                "stream": False,
-                "options": {
-                    "temperature": 0.6,
-                    "repeat_penalty": 1.1,
-                    "num_predict": 50, # Optimized: Manga/H-Manga lines are short
-                    "stop": ["原文", "翻译", "\n\n", "：", "意思", "表示", "这里"] 
-                }
-            }, timeout=30)
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"待译原文：\n{original_text}"}
+                ],
+                "temperature": 1.0, # DeepSeek V3 works best with default temp
+                "max_tokens": 100,  # Short manga bubbles
+                "stream": False
+            }
+
+            response = requests.post(DEEPSEEK_URL, headers=headers, json=payload, timeout=10)
 
             if response.status_code == 200:
                 result = response.json()
-                translated = result.get('response', '').strip()
+                translated = result['choices'][0]['message']['content'].strip()
                 
-                # Smart Line Break Matching: If original has multiple lines, split translation accordingly
+                # Check if it failed to translate (still contains Korean)
+                if translation_manager.is_valid_chinese_translation(translated) == False:
+                     print(f"⚠️ DeepSeek returned Korean: {translated}")
+                
+                # Smart Line Break Split (Basic)
                 original_lines = [l for l in original_text.split('\n') if l.strip()]
                 if len(original_lines) > 1 and '\n' not in translated:
-                    # Split translation at punctuation marks
-                    import re
-                    segments = re.split(r'([，。！？；])', translated)
-                    # Recombine punctuation with preceding text
-                    parts = []
-                    for i in range(0, len(segments)-1, 2):
-                        if i+1 < len(segments):
-                            parts.append(segments[i] + segments[i+1])
-                        else:
-                            parts.append(segments[i])
-                    
-                    # Distribute parts across lines (simple strategy: evenly distribute)
-                    if parts:
-                        lines_per_part = max(1, len(parts) // len(original_lines))
-                        result_lines = []
-                        for i in range(0, len(parts), lines_per_part):
-                            result_lines.append(''.join(parts[i:i+lines_per_part]))
-                        translated = '\n'.join(result_lines[:len(original_lines)])
-                
-                # Update history
+                     # Attempt to preserve line count structure vaguely if API returned single line
+                     # (DeepSeek usually respects line breaks if prompted, but just in case)
+                     pass 
+
                 translation_manager.update_history(request.session_id, original_text, translated)
-                
-                print(f"🤖 Trans: {translated}")
+                print(f"🤖 Trans (DeepSeek): {translated}")
                 return {"translatedText": translated}
             else:
-                print(f"❌ Ollama Error: {response.text}")
-                return {"translatedText": request.text + " [LLM Err]"}
+                print(f"❌ DeepSeek API Error: {response.text}")
+                return {"translatedText": request.text + " [API Err]"}
 
         except Exception as e:
             print(f"❌ Translation Failed: {e}")
+            import traceback
+            traceback.print_exc()
             return {"translatedText": request.text + " [Fail]"}
 
 class FeedbackRequest(BaseModel):
