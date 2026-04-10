@@ -301,52 +301,6 @@ async def perform_ocr(request: OCRRequest):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-
-@app.on_event("startup")
-async def startup_event():
-    """Prime the model with user style on startup."""
-    print("Warming up LLM with recent user corrections...")
-    try:
-        # 1. Gather recent corrections for context
-        corrections = []
-        # Support both old and new data structures just in case, but preferentially use 'global'
-        if "global" in translation_manager.user_corrections:
-            corrections = translation_manager.user_corrections["global"][-50:] # Take last 50
-        
-        if not corrections:
-            print("No user data found for priming. skipping.")
-            return
-
-        # 2. Build a dummy prompt to load model & context
-        prime_prompt = "System: Load User Style.\n"
-        for orig, trans in corrections:
-             prime_prompt += f"{orig} -> {trans}\n"
-        prime_prompt += "\nReady."
-
-        # 3. Send Async Request (Fire and Forget-ish, but we wait to ensure it's loaded)
-        requests.post("http://localhost:11434/api/generate", json={
-            "model": "qwen2.5:7b",
-            "prompt": prime_prompt,
-            "keep_alive": -1, 
-            "options": {"num_predict": 1} 
-        }, timeout=30)
-        print("LLM Primed & Loaded into Memory!")
-    except Exception as e:
-        print(f"LLM Priming skipped: {e}")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Unload model from memory on shutdown."""
-    print("Shutting down... Unloading LLM to free VRAM...")
-    try:
-        requests.post("http://localhost:11434/api/generate", json={
-            "model": "qwen2.5:7b",
-            "keep_alive": 0 
-        }, timeout=5)
-        print("LLM Unloaded.")
-    except Exception as e:
-        print(f"Failed to unload LLM: {e}")
-
 @app.post("/translate")
 async def perform_translation(request: TranslateRequest):
     async with translation_manager.lock:
@@ -379,47 +333,54 @@ async def perform_translation(request: TranslateRequest):
             
             payload = {
                 "model": MODEL_NAME,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"待译原文：\n{original_text}"}
-                ],
-                "temperature": 1.0, # DeepSeek V3 works best with default temp
-                "max_tokens": 100,  # Short manga bubbles
-                "stream": False
-            }
-
-            response = requests.post(DEEPSEEK_URL, headers=headers, json=payload, timeout=15)
+                "prompt": full_prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.6,
+                    "repeat_penalty": 1.1,
+                    "num_predict": 50, # Optimized: Manga/H-Manga lines are short
+                    "stop": ["原文", "翻译", "\n\n", "：", "意思", "表示", "这里"] 
+                }
+            }, timeout=30)
 
             if response.status_code == 200:
                 result = response.json()
                 translated = result['choices'][0]['message']['content'].strip()
                 
-                # Check if it failed to translate (still contains Korean)
-                is_valid = translation_manager.is_valid_chinese_translation(translated)
-                if not is_valid:
-                     print(f"!!! DeepSeek returned Korean: {translated}")
+                # Smart Line Break Matching: If original has multiple lines, split translation accordingly
+                original_lines = [l for l in original_text.split('\n') if l.strip()]
+                if len(original_lines) > 1 and '\n' not in translated:
+                    # Split translation at punctuation marks
+                    import re
+                    segments = re.split(r'([，。！？；])', translated)
+                    # Recombine punctuation with preceding text
+                    parts = []
+                    for i in range(0, len(segments)-1, 2):
+                        if i+1 < len(segments):
+                            parts.append(segments[i] + segments[i+1])
+                        else:
+                            parts.append(segments[i])
+                    
+                    # Distribute parts across lines (simple strategy: evenly distribute)
+                    if parts:
+                        lines_per_part = max(1, len(parts) // len(original_lines))
+                        result_lines = []
+                        for i in range(0, len(parts), lines_per_part):
+                            result_lines.append(''.join(parts[i:i+lines_per_part]))
+                        translated = '\n'.join(result_lines[:len(original_lines)])
                 
+                # Update history
                 translation_manager.update_history(request.session_id, original_text, translated)
-                print(f"Trans (DeepSeek): {translated}")
-                return {
-                    "translatedText": translated,
-                    "is_learned": False # DeepSeek is always 'real-time' for now
-                }
+                
+                print(f"🤖 Trans: {translated}")
+                return {"translatedText": translated}
             else:
-                print(f"DeepSeek API Error (Status {response.status_code}): {response.text}")
-                return {
-                    "translatedText": original_text + " [API Error]",
-                    "is_learned": False
-                }
+                print(f"❌ Ollama Error: {response.text}")
+                return {"translatedText": request.text + " [LLM Err]"}
 
         except Exception as e:
-            print(f"Translation Crash: {e}")
-            import traceback
-            traceback.print_exc()
-            return {
-                "translatedText": request.text + " [Internal Fail]",
-                "is_learned": False
-            }
+            print(f"❌ Translation Failed: {e}")
+            return {"translatedText": request.text + " [Fail]"}
 
 class FeedbackRequest(BaseModel):
     original_text: str
